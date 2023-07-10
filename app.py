@@ -1,10 +1,24 @@
 import streamlit as st
+import time
+from transformers import pipeline
+import langchain
+import pandas as pd
 import os
-# import openai
+import warnings
+warnings.filterwarnings('ignore')
+
+from langchain import OpenAI
+from langchain.callbacks import get_openai_callback
+from langchain.chains import ConversationChain
+from langchain.chains.conversation.memory import ConversationSummaryMemory
+import streamlit.components.v1 as components
+
+import pdf2image
 from io import StringIO
-from langchain.chat_models import ChatOpenAI
-from langchain import OpenAI, LLMChain, PromptTemplate
-from langchain.memory import ConversationBufferWindowMemory
+from PIL import Image
+import pytesseract
+from pytesseract import Output, TesseractError
+from functions import convert_pdf_to_txt_pages, convert_pdf_to_txt_file, save_pages, displayPDF, images_to_txt
 
 from langchain.vectorstores import Chroma
 from langchain.embeddings import OpenAIEmbeddings
@@ -14,46 +28,75 @@ from langchain.document_loaders import PyPDFLoader
 # from langchain.chains import ConversationalRetrievalChain
 from langchain.chains.summarize import load_summarize_chain
 import tempfile
+
+from streamlit_extras.colored_header import colored_header
+from streamlit_extras.add_vertical_space import add_vertical_space
+from hugchat import hugchat
+from streamlit_chat import message
+
+from langchain import OpenAI, LLMChain, PromptTemplate
+from langchain.chat_models import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.chains import LLMChain
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
+from langchain.llms import OpenAI
+
+from dotenv import load_dotenv, find_dotenv
+_ = load_dotenv(find_dotenv())
+import speech_recognition as sr
+from os import path
+from pydub import AudioSegment
+
+st.title("Summarize text from File...")
+st.write("")
+
+#Session State
+    # Generate empty lists for generated and past.
+    ## generated stores AI generated responses
+if 'generated' not in st.session_state:
+    st.session_state['generated'] = []
+## past stores User's questions
+if 'past' not in st.session_state:
+    st.session_state['past'] = []
 if "file_uploader_key" not in st.session_state:
     st.session_state["file_uploader_key"] = 0
 
-if "uploaded_files" not in st.session_state:
-    st.session_state["uploaded_files"] = []
+if "uploaded_file" not in st.session_state:
+    st.session_state["uploaded_file"] = []
 
-# Prompt Template
-template = """You are a chatbot having a conversation with a human.
 
-Given the following extracted parts of a long document and a question, create a final answer.
+global APIKEY
+APIKEY = st.text_input('API_KEY', type = 'password')
+if APIKEY:
+    
+    # #Summary
+    
+    
+    # global llm
+    # llm = ChatOpenAI(temperature=0.9)
+    
+    global prompt
+    prompt = ChatPromptTemplate.from_template(
+        "Summarize the following text {product}?"
+    )
 
-{context}
-
-{chat_history}
-Human: {human_input}
-Chatbot:"""
-
-# Init Prompt
-prompt = PromptTemplate(
-    input_variables=["chat_history", "human_input", "context"], template=template
-)
-
-a = st.container()
-with a:
-    st.title("CHATBOT")
-    global openai_api_key
-    openai_api_key = st.text_input('OpenAI API Key', type='password')
-if openai_api_key:
+    # global chain
+    # chain = LLMChain(llm=llm, prompt=prompt)
+    
     @st.cache_resource
     def llm():
-        model = OpenAI(temperature=0.0, openai_api_key=openai_api_key)
-        embedding=OpenAIEmbeddings(openai_api_key=openai_api_key)
-        return model, embedding
+        model = OpenAI(temperature=0.0, openai_api_key= APIKEY)
+        
+        return model
 
-    llm,embedding = llm()
+    llm = llm()
 
     @st.cache_resource
     def chain():
         global memory
-        memory = ConversationBufferWindowMemory(memory_key="chat_history", input_key="human_input", return_messages=True, k=3)
+        memory = ConversationBufferMemory()
+    
         chain = LLMChain(
             llm=llm, prompt=prompt, memory=memory
         )
@@ -63,120 +106,149 @@ if openai_api_key:
     global llm_chain
     llm_chain = chain()
 
-
-    summarize_template = """Write a concise summary of the given documents:
-    {text}"""
-    summarize_PROMPT = PromptTemplate(template=summarize_template, input_variables=["text"])
-    llm_summarize = load_summarize_chain(llm=llm, chain_type="map_reduce",  map_prompt=summarize_PROMPT)
-    # chain({"input_documents": docs}, return_only_outputs=True)
-    # llm_summarize = load_summarize_chain(llm, chain_type="map_reduce")
-
-
-    ########################################
-    ####### CHATBOT interface#############
-    ########################################
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    # Display chat messages from history on app rerun
-    with a:
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-    global documents
-    documents = []
+    @st.cache_resource
+    def conversation():
+        global memory
+        memory = ConversationBufferMemory()
+    
+        llm_conversation = ConversationChain(
+            llm=llm, verbose=True, memory=memory
+        )
+        return llm_conversation
 
 
+    llm_conversation = conversation()
 
-    with st.sidebar:
-        uploaded_files = st.file_uploader("Upload file", accept_multiple_files=True, 
-                                        key=st.session_state["file_uploader_key"],
-                                        type=['txt', 'pdf']
-                                        #   on_change = check
-                                        )
+    
+    #Nguyen The Quang
+    #Summarization with file
+    global product
+    product = ""
+    
+    st.write("Write a paragraph / verse / ...")
+    plot = st.text_input(label="Text to summarize", placeholder="Write something to summaeize...")
+    product = plot
+    st.write("")
+    st.write("Or upload a File...")
+    uploaded_file = st.file_uploader("Choose a file")
+    
+    if uploaded_file is not None:
+        st.session_state["uploaded_file"] = uploaded_file
+        #convert pdf to txt
+        path = uploaded_file.read()
+        file_extension = uploaded_file.name.split(".")[-1]
+        file_name = uploaded_file.name.split(".")[0]
+        stringio = ""
+        
+        if file_extension == "pdf":
+            stringio, nbPages = convert_pdf_to_txt_file(uploaded_file)
+            totalPages = "Pages: "+str(nbPages)+" in total"
+    
+        elif file_extension == "txt":
+            stringio = ""
+    
+        elif file_extension == "csv":
+            stringio = pd.read_csv(path)
+    
+        #audio, mp3 file
+        elif file_extension == "mp3" or file_extension == "wav":
+            if file_extension == "mp3":
+                ex = uploaded_file.name
+                file_export = file_name + "wav"
+                sound = AudioSegment.from_mp3(ex)
+                sound.export(file_export, format="wav")
+                r = sr.Recognizer()
+                with sr.AudioFile(file_export) as source:
+                    audio = r.record(source)  # read the entire audio file                  
+                    stringio = r.recognize_google(audio)
+            else:
+                AUDIO_FILE = uploaded_file.name
+                r = sr.Recognizer()
+                with sr.AudioFile(AUDIO_FILE) as source:
+                    audio = r.record(source)  # read the entire audio file                  
+                    stringio = r.recognize_google(audio)
+                
+        #img,png,jpg
+        else:
+            pil_image = Image.open(uploaded_file)
+            stringio = pytesseract.image_to_string(pil_image)
+            
+        global string_data
+        string_data = ""
+        
+        if stringio == "":
+            stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+            string_data = stringio.read()
+        
+        else:
+            string_data = stringio
+        product = string_data
 
-    if uploaded_files:
-            # files = set([file.name for file in uploaded_files])
-            st.session_state["uploaded_files"] = uploaded_files
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000 , chunk_overlap=10, separators=[" ", ",", "\n"])
-            for file in uploaded_files:
-                if file.name.endswith(".pdf"):
-                                    # Save the uploaded file to a temporary location
-                    temp_file_path = os.path.join('docs', file.name)
-                    with open(temp_file_path, "wb") as temp_file:
-                        temp_file.write(file.read())
-                    loader = PyPDFLoader(temp_file_path)
-                    # loader = loader.load()
-                elif file.name.endswith('.txt'):
-                    # To read file as bytes:
-                    bytes_data = file.getvalue()
-                    # To convert to a string based IO:
-                    stringio = StringIO(file.getvalue().decode("utf-8"))
-                    # To read file as string:
-                    loader = stringio.read()
-                    filename =  os.path.join('docs', file.name)
-                    # filename = 'docs/text.txt'
-                    with open(filename,"wb") as f:
-                            f.write(file.getbuffer())
-                    loader = TextLoader(filename, autodetect_encoding=True)
-                loader = loader.load()
-                documents.extend(loader)
-            documents = text_splitter.split_documents(documents)
-
-            # Embedding
-            global docsearch
-            docsearch = Chroma.from_documents(documents,
-                                            embedding=embedding)
-
-    ########################################
-    ########## SIDEBAR ###############
-    ########################################
-
-    # create a function that sets the value in state back to an empty list
     def clear_msg():
-        st.session_state.messages = []
+        st.session_state['generated'] = []
+        st.session_state['path'] = []
+        memory = ConversationBufferMemory()
         llm_chain = chain()
+        llm_conversation = conversation()
         st.session_state["file_uploader_key"] += 1
         st.experimental_rerun()
-
-    if uploaded_files:
-        if st.sidebar.button('Summarize'):
-            with a:
-                query = 'Summarize uploaded documents'
-                st.chat_message("user").markdown(query)
-                llm_chain.memory.chat_memory.add_user_message(query)
-                # Add user message to chat history
-                st.session_state.messages.append({"role": "user", "content": query})
-                response = llm_summarize.run(documents)
-                # chain({"input_documents": docs}, return_only_outputs=True)
-
-                with st.chat_message("assistant"):
-                    st.markdown(response)
-                llm_chain.memory.chat_memory.add_ai_message(response)
-                # Add assistant response to chat history
-                st.session_state.messages.append({"role": "assistant", "content": response})
-
-
+        
     st.sidebar.button("Clear", on_click=clear_msg)
 
-    ########################################
-    ####### React to user input#############
-    ########################################
+    global x
+    x = ""
+    global check
+    check = False
+    global resans
+    resans = ""
+    if st.button("Summarize"):
+        with st.spinner('Wait for it...'):
+            time.sleep(1)
+        if product != "":
+            x = llm_chain.run(product)
+            resans = st.text_area(label="Text after Summarize", value=x)
+            check = True
+            
+        else:
+            st.write("Error! Please write or upload a file")
+    
+   
+    
+    global inp
+    inp = "Summarize" + product
+    llm_conversation.memory.save_context({"input": inp}, 
+                    {"output": x})
+    
+    with st.spinner('Wait for it...'):
+        time.sleep(1)
+    st.write("Asking about the context summarize above")
+    
+    # Layout of input/response containers
+    input_container = st.container()
+    colored_header(label='', description='', color_name='blue-30')
+    response_container = st.container()
+    
+    
+    with input_container:
+        input_text = st.text_input("Question: ", "", key = "input", placeholder="Ask something...")
+        query = input_text
+    with response_container:  
+            
+        if st.button(label="Ask"):
+            with st.spinner("generating..."):
+                st.session_state.past.append(query)
+                st.session_state.generated.append(llm_conversation.predict(input=query))
+                
+            llm_conversation.memory.save_context({"input": query}, 
+                {"output": llm_conversation.predict(input=query)})
 
-    with a:
-        if query := st.chat_input():
-            # Display user message in chat message container
-            st.chat_message("user").markdown(query)
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": query})
-            if documents:
-                docs = docsearch.similarity_search(query)
-            else:
-                docs = 'No Context provide'
-            response = llm_chain.run({"context": docs, "human_input": query})
-            # Display assistant response in chat message container
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            # Add assistant response to chat history
-            st.session_state.messages.append({"role": "assistant", "content": response})
+
+            # st.chat_message("user").markdown(query)
+            # with st.chat_message("assistant"):
+            #     st.markdown(llm_conversation.predict(input=query))
+
+        if st.session_state['generated']:
+            for i in range(len(st.session_state['generated'])):
+                message(st.session_state['past'][i], is_user=True, key=str(i) + '_user')
+                message(st.session_state['generated'][i], key=str(i))
+
