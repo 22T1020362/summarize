@@ -40,6 +40,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.chains import LLMChain
 from langchain.chains import ConversationChain
 from langchain.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferWindowMemory
 from langchain.llms import OpenAI
 
 from dotenv import load_dotenv, find_dotenv
@@ -75,12 +76,24 @@ if APIKEY:
     
     # global llm
     # llm = ChatOpenAI(temperature=0.9)
-    
-    global prompt
-    prompt = ChatPromptTemplate.from_template(
-        "Summarize the following text {product}?"
-    )
+    # global prompt
+    # prompt = ChatPromptTemplate.from_template(
+    #     "Summarize the following text {product}?"
+    # )
 
+    # Prompt Template
+    template = """You are a chatbot having a conversation with a human.
+    
+    Given the following question, create a final answer.
+    
+    {chat_history}
+    Human: {human_input}
+    Chatbot:"""
+    # Init Prompt
+    prompt = PromptTemplate(
+        input_variables=["chat_history", "human_input"], template=template
+    )
+    
     # global chain
     # chain = LLMChain(llm=llm, prompt=prompt)
     
@@ -95,7 +108,7 @@ if APIKEY:
     @st.cache_resource
     def chain():
         global memory
-        memory = ConversationBufferMemory()
+        memory = ConversationBufferWindowMemory(memory_key="chat_history", input_key="human_input", return_messages=True, k=3)
     
         chain = LLMChain(
             llm=llm, prompt=prompt, memory=memory
@@ -109,8 +122,8 @@ if APIKEY:
     @st.cache_resource
     def conversation():
         global memory
-        memory = ConversationBufferMemory()
-    
+        memory = ConversationBufferWindowMemory(memory_key="chat_history", input_key="human_input", return_messages=True, k=3)
+        
         llm_conversation = ConversationChain(
             llm=llm, verbose=True, memory=memory
         )
@@ -119,7 +132,10 @@ if APIKEY:
 
     llm_conversation = conversation()
 
-    
+    summarize_template = """Write a concise summary of the given documents:
+    {text}"""
+    summarize_PROMPT = PromptTemplate(template=summarize_template, input_variables=["text"])
+    llm_summarize = load_summarize_chain(llm=llm, chain_type="map_reduce",  map_prompt=summarize_PROMPT)
     #Nguyen The Quang
     #Summarization with file
     global product
@@ -202,22 +218,31 @@ if APIKEY:
     global resans
     resans = ""
     if st.button("Summarize"):
-        with st.spinner('Wait for it...'):
-            time.sleep(1)
-        if product != "":
-            x = llm_chain.run(product)
-            resans = st.text_area(label="Text after Summarize", value=x)
-            check = True
+        query = 'Summarize uploaded documents'
+        st.chat_message("user").markdown(query)
+        llm_chain.memory.chat_memory.add_user_message(query)
+        
+        response = llm_summarize.run(product)
+        # chain({"input_documents": docs}, return_only_outputs=True)
+
+        with st.chat_message("assistant"):
+            st.markdown(response)
+        llm_chain.memory.chat_memory.add_ai_message(response)
+        
+        # with st.spinner('Wait for it...'):
+        #     time.sleep(1)
+        # if product != "":
+        #     x = llm_chain.run(product)
+        #     resans = st.text_area(label="Text after Summarize", value=x)
+        #     check = True
             
-        else:
-            st.write("Error! Please write or upload a file")
-    
-   
-    
-    global inp
-    inp = "Summarize" + product
-    llm_conversation.memory.chat_memory.add_user_message(inp)
-    llm_conversation.memory.chat_memory.add_ai_message(x)
+        # else:
+        #     st.write("Error! Please write or upload a file")
+
+    # global inp
+    # inp = "Summarize" + product
+    # llm_conversation.memory.chat_memory.add_user_message(inp)
+    # llm_conversation.memory.chat_memory.add_ai_message(x)
     
     with st.spinner('Wait for it...'):
         time.sleep(1)
@@ -235,20 +260,22 @@ if APIKEY:
     with response_container:  
             
         if st.button(label="Ask"):
-            with st.spinner("generating..."):
-                st.session_state.past.append(query)
-                st.session_state.generated.append(llm_conversation.predict(input=query))
+            # with st.spinner("generating..."):
+            #     st.session_state.past.append(query)
+            #     st.session_state.generated.append(llm_conversation.predict(input=query))
+                
+            st.chat_message("user").markdown(query)
+            response = llm_chain.run({"context": docs, "human_input": query})
+            # Display assistant response in chat message container
+            with st.chat_message("assistant"):
+                st.markdown(response)
 
-            llm_conversation.memory.chat_memory.add_user_message(query)
-            llm_conversation.memory.chat_memory.add_ai_message(llm_conversation.predict(input=query))
-            
+
             # llm_conversation.memory.save_context({"input": query}, 
             #     {"output": llm_conversation.predict(input=query)})
 
 
-            st.chat_message("user").markdown(query)
-            with st.chat_message("assistant"):
-                st.markdown(llm_conversation.predict(input=query))
+            
 
         # if st.session_state['generated']:
         #     for i in range(len(st.session_state['generated'])):
