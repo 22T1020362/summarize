@@ -1,6 +1,5 @@
 streamlit
 transformers
-torch
 pandas
 hugchat
 SpeechRecognition
