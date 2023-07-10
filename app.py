@@ -216,8 +216,8 @@ if APIKEY:
     
     global inp
     inp = "Summarize" + product
-    llm_conversation.memory.save_context({"input": inp}, 
-                    {"output": x})
+    llm_conversation.memory.chat_memory.add_user_message(inp)
+    llm_conversation.memory.chat_memory.add_ai_message(x)
     
     with st.spinner('Wait for it...'):
         time.sleep(1)
@@ -238,9 +238,12 @@ if APIKEY:
             with st.spinner("generating..."):
                 st.session_state.past.append(query)
                 st.session_state.generated.append(llm_conversation.predict(input=query))
-                
-            llm_conversation.memory.save_context({"input": query}, 
-                {"output": llm_conversation.predict(input=query)})
+
+            llm_conversation.memory.chat_memory.add_user_message(query)
+            llm_conversation.memory.chat_memory.add_ai_message(llm_conversation.predict(input=query))
+            
+            # llm_conversation.memory.save_context({"input": query}, 
+            #     {"output": llm_conversation.predict(input=query)})
 
 
             st.chat_message("user").markdown(query)
