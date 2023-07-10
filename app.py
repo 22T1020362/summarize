@@ -36,7 +36,7 @@ import speech_recognition as sr
 from os import path
 from pydub import AudioSegment
 APIKEY = st.text_input('API_KEY', type = 'password')
-if API_KEY:
+if APIKEY:
     os.environ["OPENAI_API_KEY"] = API_KEY
     
     #Summary
