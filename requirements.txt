@@ -1,0 +1,17 @@
+streamlit
+transformers
+torch
+pandas
+hugchat
+SpeechRecognition
+pydub
+streamlit-chat
+streamlit-extras
+langchain
+huggingface_hub
+googletrans==4.0.0-rc1
+python-dotenv
+pdfminer==20191125
+pdf2image
+pytesseract
+openai
